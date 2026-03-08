@@ -4,6 +4,8 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Moq;
 using Xunit;
 using WorkflowAutomation.Application.DTOs;
@@ -20,6 +22,7 @@ namespace WorkflowAutomation.Tests.Services
         private readonly Mock<IRepository<Form>> _formRepo;
         private readonly Mock<IUnitOfWork> _unitOfWork;
         private readonly Mock<IAuditLogService> _auditLogService;
+        private readonly Mock<IHttpContextAccessor> _httpContextAccessor;
         private readonly FormPermissionService _sut;
 
         public FormPermissionServiceTests()
@@ -28,11 +31,26 @@ namespace WorkflowAutomation.Tests.Services
             _formRepo = new Mock<IRepository<Form>>();
             _unitOfWork = new Mock<IUnitOfWork>();
             _auditLogService = new Mock<IAuditLogService>();
+            _httpContextAccessor = new Mock<IHttpContextAccessor>();
+
+            var httpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(ClaimTypes.NameIdentifier, Guid.NewGuid().ToString()),
+                        new Claim(ClaimTypes.Role, "admin")
+                    },
+                    "TestAuth"))
+            };
+            _httpContextAccessor.SetupGet(x => x.HttpContext).Returns(httpContext);
+
             _sut = new FormPermissionService(
                 _permissionRepo.Object,
                 _formRepo.Object,
                 _unitOfWork.Object,
-                _auditLogService.Object);
+                _auditLogService.Object,
+                _httpContextAccessor.Object);
         }
 
         [Fact]

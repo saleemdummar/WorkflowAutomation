@@ -9,7 +9,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { FormElement, FormLayoutConfig, FormLayoutType } from '../../../../types/form-builder';
 import { AuthGuard } from '../../../../components/AuthGuard';
 import { useToast } from '../../../../contexts/ToastContext';
-import { useForm as useFormQuery, useUpdateForm, usePublishForm, useCategories } from '../../../../hooks/queries';
+import { useForm as useFormQuery, useUpdateForm, usePublishForm, useUnpublishForm, useCategories } from '../../../../hooks/queries';
 
 const EditFormPage: React.FC = () => {
     const router = useRouter();
@@ -27,22 +27,24 @@ const EditFormPage: React.FC = () => {
     const { data: categories = [] } = useCategories();
     const updateFormMutation = useUpdateForm();
     const publishFormMutation = usePublishForm();
+    const unpublishFormMutation = useUnpublishForm();
 
     // Parse form data into initial state
     const initialData = useMemo(() => {
         if (!formData) return null;
         let definition: FormElement[] = [];
         let layout: { layout: FormLayoutConfig | FormLayoutType; theme: { primaryColor: string; backgroundColor: string; textColor: string } } | undefined;
+        let parseError: string | null = null;
         try {
             definition = formData.definition ? JSON.parse(formData.definition) : [];
-        } catch (parseError) {
-            console.error('Failed to parse form definition:', parseError);
+        } catch {
+            parseError = 'This form contains invalid field definition data and cannot be edited safely until it is repaired.';
         }
         if (formData.layout) {
             try {
                 layout = JSON.parse(formData.layout);
-            } catch (parseError) {
-                console.error('Failed to parse form layout:', parseError);
+            } catch {
+                parseError = 'This form contains invalid layout data and cannot be edited safely until it is repaired.';
             }
         }
         return {
@@ -50,7 +52,8 @@ const EditFormPage: React.FC = () => {
             description: formData.description || '',
             elements: definition,
             layout,
-            isPublished: formData.isPublished
+            isPublished: formData.isPublished,
+            parseError
         };
     }, [formData]);
 
@@ -68,6 +71,12 @@ const EditFormPage: React.FC = () => {
             setTimeout(() => router.push('/'), 2000);
         }
     }, [formError, router, showError]);
+
+    useEffect(() => {
+        if (initialData?.parseError) {
+            showError(initialData.parseError);
+        }
+    }, [initialData?.parseError, showError]);
 
     const handleSave = async (name: string, description: string, definition: string, layout: string) => {
         try {
@@ -112,7 +121,7 @@ const EditFormPage: React.FC = () => {
 
     const handleUnpublish = async () => {
         try {
-            await formsApi.unpublish(id);
+            await unpublishFormMutation.mutateAsync(id);
             success('Form unpublished successfully!');
         } catch (error) {
             console.error('Failed to unpublish form:', error);
@@ -139,6 +148,17 @@ const EditFormPage: React.FC = () => {
         return (
             <div className="h-screen bg-fcc-charcoal flex items-center justify-center text-white">
                 <p>Form not found.</p>
+            </div>
+        );
+    }
+
+    if (initialData.parseError) {
+        return (
+            <div className="h-screen bg-fcc-charcoal flex items-center justify-center p-6">
+                <div className="max-w-xl border border-red-500/40 bg-fcc-midnight p-6 text-white">
+                    <h1 className="text-xl font-bold text-red-400 mb-3">Form data needs repair</h1>
+                    <p className="text-gray-300">{initialData.parseError}</p>
+                </div>
             </div>
         );
     }

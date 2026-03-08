@@ -55,20 +55,24 @@ namespace WorkflowAutomation.Application.Services
         {
             if (elements == null || fields == null) return;
 
-            // Build a dictionary keyed by field GUID for reliable lookup
             var fieldById = fields.ToDictionary(f => f.Id);
+            var fieldByName = fields
+                .GroupBy(f => NormalizeLookupKey(f.FieldName), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var resolvedFieldIdByElementId = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var element in elements)
             {
-                // Skip if no valid field ID
-                if (string.IsNullOrEmpty(element.Id) || !Guid.TryParse(element.Id, out var fieldId))
-                    continue;
-
-                // Look up the field by ID
-                if (!fieldById.TryGetValue(fieldId, out var field))
+                var field = ResolveField(element, fieldById, fieldByName);
+                if (field == null)
                 {
-                    _logger.LogWarning("Field with ID {FieldId} not found in form {FormId}", element.Id, formId);
+                    _logger.LogWarning("Field for element {ElementId} / {FieldName} not found in form {FormId}", element.Id, element.FieldName, formId);
                     continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(element.Id))
+                {
+                    resolvedFieldIdByElementId[element.Id] = field.Id;
                 }
 
                 if (element.Conditions == null) continue;
@@ -78,7 +82,16 @@ namespace WorkflowAutomation.Application.Services
                 var groupDto = JsonSerializer.Deserialize<ConditionGroupDto>(conditionsJson, _jsonOptions);
                 if (groupDto == null || groupDto.Conditions == null || groupDto.Conditions.Count == 0) continue;
 
-                var group = await CreateConditionGroupAsync(groupDto, formId, null, field.Id, userId);
+                var group = await CreateConditionGroupAsync(
+                    groupDto,
+                    formId,
+                    null,
+                    field.Id,
+                    userId,
+                    fieldById,
+                    fieldByName,
+                    resolvedFieldIdByElementId,
+                    elements);
                 field.ConditionGroupId = group.Id;
                 await _fieldRepository.UpdateAsync(field);
             }
@@ -88,11 +101,19 @@ namespace WorkflowAutomation.Application.Services
         }
 
         private async Task<ConditionGroup> CreateConditionGroupAsync(
-            ConditionGroupDto groupDto, Guid formId, Guid? parentGroupId, Guid targetFieldId, string userId)
+            ConditionGroupDto groupDto,
+            Guid formId,
+            Guid? parentGroupId,
+            Guid targetFieldId,
+            string userId,
+            IReadOnlyDictionary<Guid, FormField> fieldById,
+            IReadOnlyDictionary<string, FormField> fieldByName,
+            IDictionary<string, Guid> resolvedFieldIdByElementId,
+            IReadOnlyList<FormElementDto> elements)
         {
             var group = new ConditionGroup
             {
-                Id = Guid.TryParse(groupDto.Id, out var gid) ? gid : Guid.NewGuid(),
+                Id = Guid.NewGuid(),
                 FormId = formId,
                 GroupName = targetFieldId.ToString(),
                 LogicalOperator = groupDto.Logic ?? "AND",
@@ -119,7 +140,7 @@ namespace WorkflowAutomation.Application.Services
                         var nestedDto = JsonSerializer.Deserialize<ConditionGroupDto>(jsonText, _jsonOptions);
                         if (nestedDto != null)
                         {
-                            await CreateConditionGroupAsync(nestedDto, formId, group.Id, targetFieldId, userId);
+                            await CreateConditionGroupAsync(nestedDto, formId, group.Id, targetFieldId, userId, fieldById, fieldByName, resolvedFieldIdByElementId, elements);
                         }
                     }
                     else
@@ -128,7 +149,7 @@ namespace WorkflowAutomation.Application.Services
                         var condDto = JsonSerializer.Deserialize<FieldConditionDto>(jsonText, _jsonOptions);
                         if (condDto != null)
                         {
-                            await CreateFormConditionAsync(condDto, group, formId, targetFieldId, userId, executionOrder++);
+                            await CreateFormConditionAsync(condDto, group, formId, targetFieldId, userId, executionOrder++, fieldById, fieldByName, resolvedFieldIdByElementId, elements);
                         }
                     }
                 }
@@ -138,9 +159,19 @@ namespace WorkflowAutomation.Application.Services
         }
 
         private async Task CreateFormConditionAsync(
-            FieldConditionDto dto, ConditionGroup group, Guid formId, Guid targetFieldId, string userId, int order)
+            FieldConditionDto dto,
+            ConditionGroup group,
+            Guid formId,
+            Guid targetFieldId,
+            string userId,
+            int order,
+            IReadOnlyDictionary<Guid, FormField> fieldById,
+            IReadOnlyDictionary<string, FormField> fieldByName,
+            IDictionary<string, Guid> resolvedFieldIdByElementId,
+            IReadOnlyList<FormElementDto> elements)
         {
-            if (string.IsNullOrWhiteSpace(dto.FieldId) || !Guid.TryParse(dto.FieldId, out var triggerFieldId))
+            var triggerFieldId = ResolveTriggerFieldId(dto.FieldId, fieldById, fieldByName, resolvedFieldIdByElementId, elements);
+            if (!triggerFieldId.HasValue)
             {
                 _logger.LogWarning("Skipping condition with invalid trigger field ID: {FieldId}", dto.FieldId);
                 return;
@@ -151,7 +182,7 @@ namespace WorkflowAutomation.Application.Services
                 FormId = formId,
                 ConditionGroupId = group.Id,
                 ConditionName = $"Condition_{order}",
-                TriggerFieldId = triggerFieldId,
+                TriggerFieldId = triggerFieldId.Value,
                 Operator = dto.Operator ?? "equals",
                 ComparisonValue = dto.Value?.ToString() ?? "",
                 LogicalOperator = group.LogicalOperator,
@@ -181,6 +212,67 @@ namespace WorkflowAutomation.Application.Services
                 LastModifiedBy = userId
             };
             await _conditionActionRepository.AddAsync(action);
+        }
+
+        private FormField? ResolveField(
+            FormElementDto element,
+            IReadOnlyDictionary<Guid, FormField> fieldById,
+            IReadOnlyDictionary<string, FormField> fieldByName)
+        {
+            if (!string.IsNullOrWhiteSpace(element.Id) && Guid.TryParse(element.Id, out var fieldId) && fieldById.TryGetValue(fieldId, out var byId))
+            {
+                return byId;
+            }
+
+            var normalizedFieldName = NormalizeLookupKey(element.FieldName);
+            if (!string.IsNullOrWhiteSpace(normalizedFieldName) && fieldByName.TryGetValue(normalizedFieldName, out var byName))
+            {
+                return byName;
+            }
+
+            return null;
+        }
+
+        private Guid? ResolveTriggerFieldId(
+            string? triggerFieldId,
+            IReadOnlyDictionary<Guid, FormField> fieldById,
+            IReadOnlyDictionary<string, FormField> fieldByName,
+            IDictionary<string, Guid> resolvedFieldIdByElementId,
+            IReadOnlyList<FormElementDto> elements)
+        {
+            if (string.IsNullOrWhiteSpace(triggerFieldId))
+            {
+                return null;
+            }
+
+            if (Guid.TryParse(triggerFieldId, out var parsedFieldId) && fieldById.ContainsKey(parsedFieldId))
+            {
+                return parsedFieldId;
+            }
+
+            if (resolvedFieldIdByElementId.TryGetValue(triggerFieldId, out var resolvedFieldId))
+            {
+                return resolvedFieldId;
+            }
+
+            var sourceElement = elements.FirstOrDefault(e => string.Equals(e.Id, triggerFieldId, StringComparison.OrdinalIgnoreCase));
+            if (sourceElement != null)
+            {
+                var normalizedFieldName = NormalizeLookupKey(sourceElement.FieldName);
+                if (!string.IsNullOrWhiteSpace(normalizedFieldName) && fieldByName.TryGetValue(normalizedFieldName, out var field))
+                {
+                    return field.Id;
+                }
+            }
+
+            return null;
+        }
+
+        private static string NormalizeLookupKey(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? string.Empty
+                : value.Trim().ToLowerInvariant();
         }
 
         public async Task DeleteAllConditionsAsync(Guid formId)
@@ -222,6 +314,9 @@ namespace WorkflowAutomation.Application.Services
             // 6. Delete all groups (no FK references remain)
             if (groups.Any())
                 await _conditionGroupRepository.DeleteRangeAsync(groups);
+
+            // Persist the deletion before any recreation in the same request.
+            await _unitOfWork.CompleteAsync();
         }
 
         public async Task<string> BuildFormDefinitionJsonAsync(Guid formId)
@@ -269,16 +364,32 @@ namespace WorkflowAutomation.Application.Services
                             element["placeholder"] = ph.GetString()!;
 
                         if (config.TryGetProperty("options", out var opts) && opts.ValueKind == JsonValueKind.Array)
-                            element["options"] = JsonSerializer.Deserialize<object>(opts.GetRawText());
+                        {
+                            var options = JsonSerializer.Deserialize<object>(opts.GetRawText());
+                            if (options != null)
+                                element["options"] = options;
+                        }
 
                         if (config.TryGetProperty("validation", out var val) && val.ValueKind == JsonValueKind.Object)
-                            element["validation"] = JsonSerializer.Deserialize<object>(val.GetRawText());
+                        {
+                            var validation = JsonSerializer.Deserialize<object>(val.GetRawText());
+                            if (validation != null)
+                                element["validation"] = validation;
+                        }
 
                         if (config.TryGetProperty("calculation", out var calc) && calc.ValueKind == JsonValueKind.Object)
-                            element["calculation"] = JsonSerializer.Deserialize<object>(calc.GetRawText());
+                        {
+                            var calculation = JsonSerializer.Deserialize<object>(calc.GetRawText());
+                            if (calculation != null)
+                                element["calculation"] = calculation;
+                        }
 
                         if (config.TryGetProperty("style", out var style) && style.ValueKind == JsonValueKind.Object)
-                            element["style"] = JsonSerializer.Deserialize<object>(style.GetRawText());
+                        {
+                            var parsedStyle = JsonSerializer.Deserialize<object>(style.GetRawText());
+                            if (parsedStyle != null)
+                                element["style"] = parsedStyle;
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -311,7 +422,7 @@ namespace WorkflowAutomation.Application.Services
             {
                 foreach (var cond in conditions)
                 {
-                    ConditionAction action = null;
+                    ConditionAction? action = null;
                     if (actionsByCondition.TryGetValue(cond.Id, out var acts))
                     {
                         action = acts.FirstOrDefault();

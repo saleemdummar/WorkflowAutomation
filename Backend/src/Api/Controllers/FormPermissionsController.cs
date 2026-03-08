@@ -39,6 +39,14 @@ namespace WorkflowAutomation.Api.Controllers
             {
                 return NotFound(new { message = ex.Message });
             }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
         }
 
         [HttpPut("{permissionId}")]
@@ -54,6 +62,14 @@ namespace WorkflowAutomation.Api.Controllers
             {
                 return NotFound();
             }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
         }
 
         [HttpDelete("{permissionId}")]
@@ -68,6 +84,10 @@ namespace WorkflowAutomation.Api.Controllers
             catch (KeyNotFoundException)
             {
                 return NotFound();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
             }
         }
     }

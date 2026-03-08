@@ -26,13 +26,13 @@ export const ConditionNode: React.FC<NodeProps> = ({ data, selected }) => {
 
     return (
         <div
-            className={`bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow-lg p-4 min-w-[200px] border-2 ${selected ? 'border-fcc-gold' : 'border-transparent'
+            className={`bg-linear-to-br from-purple-500 to-purple-600 rounded-lg shadow-lg p-4 min-w-50 border-2 ${selected ? 'border-fcc-gold' : 'border-transparent'
                 }`}
         >
             <Handle
                 type="target"
                 position={Position.Left}
-                className="!bg-fcc-gold !w-3 !h-3 !border-2 !border-white"
+                className="bg-fcc-gold! w-3! h-3! border-2! border-white!"
             />
 
             <div className="flex items-center gap-2 mb-2">
@@ -44,11 +44,11 @@ export const ConditionNode: React.FC<NodeProps> = ({ data, selected }) => {
 
             <div className="text-white/80 text-sm">
                 {data.config?.condition ? (
-                    <div className="font-mono text-xs bg-black/20 p-2 rounded max-w-[180px] overflow-hidden text-ellipsis">
+                    <div className="font-mono text-xs bg-black/20 p-2 rounded max-w-45 overflow-hidden text-ellipsis">
                         {data.config.condition}
                     </div>
                 ) : simpleSummary ? (
-                    <div className="font-mono text-xs bg-black/20 p-2 rounded max-w-[180px] overflow-hidden text-ellipsis">
+                    <div className="font-mono text-xs bg-black/20 p-2 rounded max-w-45 overflow-hidden text-ellipsis">
                         {simpleSummary}
                     </div>
                 ) : (
@@ -60,14 +60,14 @@ export const ConditionNode: React.FC<NodeProps> = ({ data, selected }) => {
                 position={Position.Right}
                 id="true"
                 style={{ top: '40%' }}
-                className="!bg-green-400 !w-3 !h-3 !border-2 !border-white"
+                className="bg-green-400! w-3! h-3! border-2! border-white!"
             />
             <Handle
                 type="source"
                 position={Position.Right}
                 id="false"
                 style={{ top: '60%' }}
-                className="!bg-red-400 !w-3 !h-3 !border-2 !border-white"
+                className="bg-red-400! w-3! h-3! border-2! border-white!"
             />
 
             <div className="absolute right-4 top-[35%] text-xs text-white font-medium">

@@ -116,6 +116,15 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
         setIsClient(true);
     }, []);
 
+    useEffect(() => {
+        setName(initialName);
+        setDescription(initialDescription);
+        setElements(initialElements);
+        setFormLayout(normalizeLayoutConfig(initialLayout?.layout));
+        setFormTheme(initialLayout?.theme || { primaryColor: '#FFD700', backgroundColor: '#1a1a1a', textColor: '#ffffff' });
+        setIsDirty(false);
+    }, [initialName, initialDescription, initialElements, initialLayout]);
+
     // Track dirty state (FB-10)
     useEffect(() => {
         const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -236,12 +245,16 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
             newElements.splice(insertIndex, 0, newElement);
             setElements(newElements);
             setSelectedId(newElement.id);
+            setIsDirty(true);
         } else if (active.data.current?.type === 'element') {
             const oldIndex = elements.findIndex(el => el.id === activeId);
             const newIndex = elements.findIndex(el => el.id === overId);
 
             if (oldIndex !== -1 && newIndex !== -1) {
                 setElements(prev => arrayMove(prev, oldIndex, newIndex));
+                if (oldIndex !== newIndex) {
+                    setIsDirty(true);
+                }
             }
         }
     };
@@ -374,14 +387,20 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                             <input
                                 type="text"
                                 value={name}
-                                onChange={(e) => setName(e.target.value)}
+                                onChange={(e) => {
+                                    setName(e.target.value);
+                                    setIsDirty(true);
+                                }}
                                 className="bg-transparent border-none text-lg font-black tracking-tighter uppercase focus:outline-none focus:text-fcc-gold w-40 sm:w-64"
                                 placeholder="Form Name"
                             />
                             <input
                                 type="text"
                                 value={description}
-                                onChange={(e) => setDescription(e.target.value)}
+                                onChange={(e) => {
+                                    setDescription(e.target.value);
+                                    setIsDirty(true);
+                                }}
                                 className="bg-transparent border-none text-sm text-gray-300 focus:outline-none focus:text-fcc-gold w-40 sm:w-64 mt-1"
                                 placeholder="Form Description (optional)"
                             />
@@ -449,9 +468,15 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                         elements={elements}
                         onChange={handleUpdateElement}
                         formLayout={formLayout}
-                        onFormLayoutChange={setFormLayout}
+                        onFormLayoutChange={(nextLayout) => {
+                            setFormLayout(nextLayout);
+                            setIsDirty(true);
+                        }}
                         formTheme={formTheme}
-                        onFormThemeChange={setFormTheme}
+                        onFormThemeChange={(nextTheme) => {
+                            setFormTheme(nextTheme);
+                            setIsDirty(true);
+                        }}
                     />
                 </div>
             </div>
@@ -492,6 +517,7 @@ export const FormBuilder: React.FC<FormBuilderProps> = ({
                             setFormTheme(parsedLayout.theme || formTheme);
                         }
 
+                        setIsDirty(false);
                         setIsHistoryOpen(false);
                     } catch (err: unknown) {
                         const errorMessage =

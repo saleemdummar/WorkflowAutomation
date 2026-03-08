@@ -93,7 +93,7 @@ namespace WorkflowAutomation.Application.Services
 
             form.IsArchived = true;
             form.ArchivedAt = DateTime.UtcNow;
-            form.ArchivedBy = Guid.Parse(userId);
+            form.ArchivedBy = Guid.TryParse(userId, out var archivedBy) ? archivedBy : null;
             form.ArchiveReason = reason;
             form.IsActive = false;
             form.LastModifiedBy = userId;
@@ -182,6 +182,8 @@ namespace WorkflowAutomation.Application.Services
             var form = await _formRepository.GetByIdAsync(formId);
             if (form == null)
                 throw new KeyNotFoundException("Form not found");
+            if (!await HasFormPermissionAsync(formId, "View"))
+                throw new UnauthorizedAccessException("You do not have permission to view this form");
 
             var now = DateTime.UtcNow;
             var isExpired = form.ExpirationDate.HasValue && form.ExpirationDate.Value < now;
@@ -221,9 +223,13 @@ namespace WorkflowAutomation.Application.Services
             var dtos = new List<FormDto>();
             foreach (var form in archivedForms)
             {
+                if (!await HasFormPermissionAsync(form.Id, "View"))
+                {
+                    continue;
+                }
+
                 var dto = await BuildFormDtoAsync(form);
                 dto.Status = form.IsPublished ? "Published" : "Draft";
-                dto.CreatedBy = form.CreatedBy?.ToString() ?? string.Empty;
                 dtos.Add(dto);
             }
 
@@ -237,9 +243,13 @@ namespace WorkflowAutomation.Application.Services
             var dtos = new List<FormDto>();
             foreach (var form in expiredForms)
             {
+                if (!await HasFormPermissionAsync(form.Id, "View"))
+                {
+                    continue;
+                }
+
                 var dto = await BuildFormDtoAsync(form);
                 dto.Status = form.IsPublished ? "Published" : "Draft";
-                dto.CreatedBy = form.CreatedBy?.ToString() ?? string.Empty;
                 dtos.Add(dto);
             }
 
@@ -340,10 +350,10 @@ namespace WorkflowAutomation.Application.Services
             var userId = explicitUserId ?? current.UserId;
 
             if (current.Roles.Contains("super-admin") || current.Roles.Contains("admin")) return true;
-            if (string.IsNullOrWhiteSpace(userId)) return true;
 
             var permissions = (await _permissionRepository.FindAsync(p => p.FormId == formId)).ToList();
             if (!permissions.Any()) return true;
+            if (string.IsNullOrWhiteSpace(userId)) return false;
 
             var requiredRank = PermissionRank(requiredLevel);
             Guid.TryParse(userId, out var userGuid);

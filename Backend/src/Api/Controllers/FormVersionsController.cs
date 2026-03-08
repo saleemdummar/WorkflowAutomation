@@ -42,7 +42,7 @@ namespace WorkflowAutomation.Api.Controllers
         }
 
         [HttpPost("{versionNumber}/rollback")]
-        [Authorize(Policy = "FormEditAny")]
+        [Authorize(Policy = "FormCreate")]
         public async Task<IActionResult> RollbackToVersion(Guid formId, int versionNumber)
         {
             try
@@ -53,6 +53,10 @@ namespace WorkflowAutomation.Api.Controllers
             catch (KeyNotFoundException)
             {
                 return NotFound();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
             }
         }
 

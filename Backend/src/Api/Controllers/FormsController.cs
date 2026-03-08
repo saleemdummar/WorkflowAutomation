@@ -94,6 +94,10 @@ namespace WorkflowAutomation.Api.Controllers
             {
                 return NotFound(new { message = "Form not found" });
             }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
             catch (Exception)
             {
                 return StatusCode(500, new { message = "An unexpected error occurred" });
@@ -355,20 +359,38 @@ namespace WorkflowAutomation.Api.Controllers
             {
                 return NotFound(new { message = ex.Message });
             }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
         }
 
         [HttpGet("archived")]
         public async Task<IActionResult> GetArchivedForms()
         {
-            var forms = await _lifecycleService.GetArchivedFormsAsync();
-            return Ok(forms);
+            try
+            {
+                var forms = await _lifecycleService.GetArchivedFormsAsync();
+                return Ok(forms);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
         }
 
         [HttpGet("expired")]
         public async Task<IActionResult> GetExpiredForms()
         {
-            var forms = await _lifecycleService.GetExpiredFormsAsync();
-            return Ok(forms);
+            try
+            {
+                var forms = await _lifecycleService.GetExpiredFormsAsync();
+                return Ok(forms);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
         }
     }
 

@@ -2,6 +2,48 @@ import { apiClient } from './client';
 import type { FormField, FormExportData, VersionComparison } from './types';
 import type { Form, FormVersion, FormLifecycleStatus } from '../../types/entities';
 
+interface BackendFormFieldDto {
+    id?: string;
+    Id?: string;
+    name?: string;
+    Name?: string;
+    label?: string;
+    Label?: string;
+    type?: string;
+    Type?: string;
+    required?: boolean;
+    Required?: boolean;
+    order?: number;
+    Order?: number;
+    options?: string;
+    validationRules?: string;
+    configJson?: string;
+    ConfigJson?: string;
+}
+
+const mapFieldConfig = (field: BackendFormFieldDto) => {
+    const configJson = field.configJson || field.ConfigJson;
+    if (!configJson) {
+        return {
+            options: field.options || '',
+            validationRules: field.validationRules || '',
+        };
+    }
+
+    try {
+        const config = JSON.parse(configJson) as { options?: unknown; validation?: unknown };
+        return {
+            options: config.options ? JSON.stringify(config.options) : field.options || '',
+            validationRules: config.validation ? JSON.stringify(config.validation) : field.validationRules || '',
+        };
+    } catch {
+        return {
+            options: field.options || '',
+            validationRules: field.validationRules || '',
+        };
+    }
+};
+
 export const formsApi = {
     getAll: async (categoryId?: string): Promise<Form[]> => {
         const url = categoryId ? `forms?categoryId=${categoryId}` : 'forms';
@@ -69,22 +111,23 @@ export const formsApi = {
         return response.data;
     },
     getFields: async (formId: string): Promise<FormField[]> => {
-        const response = await apiClient.get<any[]>(`forms/${formId}/fields`);
-        // Map backend FormFieldDto to frontend FormField interface
-        return response.data.map((field: any) => ({
-            id: field.id || field.Id,
-            formId: formId,
-            fieldName: field.name || field.Name || '',
-            fieldLabel: field.label || field.Label || '',
-            fieldType: field.type || field.Type || 'text',
-            isRequired: field.required ?? field.Required ?? false,
-            displayOrder: field.order ?? field.Order ?? 0,
-            options: field.options || field.ConfigJson || '',
-            validationRules: field.validationRules || '',
-            // Also include name/label for direct component access
-            name: field.name || field.Name || '',
-            label: field.label || field.Label || ''
-        }));
+        const response = await apiClient.get<BackendFormFieldDto[]>(`forms/${formId}/fields`);
+        return response.data.map((field) => {
+            const mappedConfig = mapFieldConfig(field);
+            return {
+                id: field.id || field.Id || field.name || field.Name || '',
+                formId: formId,
+                fieldName: field.name || field.Name || '',
+                fieldLabel: field.label || field.Label || '',
+                fieldType: field.type || field.Type || 'text',
+                isRequired: field.required ?? field.Required ?? false,
+                displayOrder: field.order ?? field.Order ?? 0,
+                options: mappedConfig.options,
+                validationRules: mappedConfig.validationRules,
+                name: field.name || field.Name || '',
+                label: field.label || field.Label || ''
+            };
+        });
     },
     transferOwnership: async (formId: string, data: { newOwnerId: string }): Promise<void> => {
         await apiClient.post(`forms/${formId}/transfer-ownership`, data);

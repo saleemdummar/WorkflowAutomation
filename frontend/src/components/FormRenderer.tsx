@@ -9,7 +9,13 @@ import { useToast } from '../contexts/ToastContext';
 import { Calculator } from 'lucide-react';
 import { useFormEngine } from '../hooks/useFormEngine';
 
-const SignatureCanvas = dynamic(() => import('react-signature-canvas'), { ssr: false });
+const SignatureCanvas = dynamic(() => import('react-signature-canvas'), { ssr: false }) as any;
+
+interface SignatureCanvasRef {
+    clear: () => void;
+    isEmpty: () => boolean;
+    toDataURL: () => string;
+}
 
 interface FormTheme {
     primaryColor?: string;
@@ -62,7 +68,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
         onChange,
     });
 
-    const signatureRefs = useRef<Record<string, SignatureCanvas | null>>({});
+    const signatureRefs = useRef<Record<string, SignatureCanvasRef | null>>({});
     const [uploadingFields, setUploadingFields] = useState<Set<string>>(new Set());
     const { error } = useToast();
     const isViewMode = mode === 'view';
@@ -280,7 +286,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({
                 return (
                     <div>
                         <SignatureCanvas
-                            ref={(ref) => {
+                            ref={(ref: SignatureCanvasRef | null) => {
                                 signatureRefs.current[element.id] = ref;
                             }}
                             canvasProps={{

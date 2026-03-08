@@ -4,7 +4,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { MainNavigation } from '@/components/MainNavigation';
 import { AdvancedSearch } from '@/components/AdvancedSearch';
-import { useForms as useFormsQuery, useDeleteForm, usePublishForm, useCreateForm } from '@/hooks/queries';
+import { useForms as useFormsQuery, useArchiveForm, usePublishForm, useCreateForm, useUnpublishForm } from '@/hooks/queries';
 import { useCategories } from '@/hooks/queries';
 import { formsApi } from '@/lib/api';
 import { Form as EntityForm } from '@/types/entities';
@@ -40,8 +40,9 @@ function FormsPage() {
     // TanStack Query hooks
     const { data: forms = [], isLoading: loading } = useFormsQuery();
     const { data: categories = [] } = useCategories();
-    const deleteFormMutation = useDeleteForm();
+    const archiveFormMutation = useArchiveForm();
     const publishFormMutation = usePublishForm();
+    const unpublishFormMutation = useUnpublishForm();
     const createFormMutation = useCreateForm();
 
     // Client-side filtering
@@ -92,23 +93,27 @@ function FormsPage() {
 
     const handleDelete = async (id: string) => {
         try {
-            await deleteFormMutation.mutateAsync(id);
+            await archiveFormMutation.mutateAsync({ formId: id, data: { archiveReason: 'Archived from forms dashboard' } });
             setDeleteConfirm(null);
+            toast.success('Form archived successfully.');
         } catch (error) {
-            console.error('Failed to delete form:', error);
-            toast.error('Failed to delete form');
+            console.error('Failed to archive form:', error);
+            toast.error('Failed to archive form');
         }
     };
 
     const handlePublishToggle = async (form: EntityForm) => {
         try {
             if (form.isPublished) {
-                await formsApi.unpublish(form.id);
+                await unpublishFormMutation.mutateAsync(form.id);
+                toast.success('Form unpublished successfully.');
             } else {
                 await publishFormMutation.mutateAsync(form.id);
+                toast.success('Form published successfully.');
             }
         } catch (error) {
             console.error('Failed to toggle publish status:', error);
+            toast.error('Failed to update publish status');
         }
     };
 
@@ -324,7 +329,7 @@ function FormsPage() {
                                                 {form.createdBy && (
                                                     <span className="flex items-center gap-1">
                                                         <User size={14} />
-                                                        {form.createdBy}
+                                                        Created by owner
                                                     </span>
                                                 )}
                                             </div>
@@ -332,13 +337,24 @@ function FormsPage() {
 
                                         {/* Actions */}
                                         <div className="flex items-center gap-2">
-                                            <Link
-                                                href={`/forms/submit/${form.id}`}
-                                                className="p-2 text-gray-400 hover:text-white hover:bg-fcc-charcoal transition-colors"
-                                                title="Preview Form"
-                                            >
-                                                <Eye size={18} />
-                                            </Link>
+                                            {form.isPublished ? (
+                                                <Link
+                                                    href={`/forms/submit/${form.id}`}
+                                                    className="p-2 text-gray-400 hover:text-white hover:bg-fcc-charcoal transition-colors"
+                                                    title="Open Form"
+                                                >
+                                                    <Eye size={18} />
+                                                </Link>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    disabled
+                                                    className="p-2 text-gray-600 cursor-not-allowed"
+                                                    title="Publish the form to open the submission view"
+                                                >
+                                                    <Eye size={18} />
+                                                </button>
+                                            )}
                                             <Link
                                                 href={`/forms/edit/${form.id}`}
                                                 className="p-2 text-gray-400 hover:text-fcc-gold hover:bg-fcc-charcoal transition-colors"
@@ -385,7 +401,7 @@ function FormsPage() {
                                                             className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-2"
                                                         >
                                                             <Trash2 size={14} />
-                                                            Delete
+                                                            Archive
                                                         </button>
                                                     </div>
                                                 )}
@@ -398,7 +414,7 @@ function FormsPage() {
                     </div>
                 )}
 
-                {/* Delete Confirmation Modal */}
+                {/* Archive Confirmation Modal */}
                 {deleteConfirm && (
                     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
                         <div className="bg-fcc-midnight border border-fcc-border p-6 max-w-md w-full">
@@ -406,10 +422,10 @@ function FormsPage() {
                                 <div className="p-3 rounded-full bg-red-500/10">
                                     <AlertCircle className="w-6 h-6 text-red-500" />
                                 </div>
-                                <h3 className="text-xl font-bold text-white">Delete Form</h3>
+                                <h3 className="text-xl font-bold text-white">Archive Form</h3>
                             </div>
                             <p className="text-gray-400 mb-6">
-                                Are you sure you want to delete this form? This action cannot be undone and all submissions will be lost.
+                                Are you sure you want to archive this form? It will be removed from the active list and can be restored later.
                             </p>
                             <div className="flex justify-end gap-3">
                                 <button
@@ -422,7 +438,7 @@ function FormsPage() {
                                     onClick={() => handleDelete(deleteConfirm)}
                                     className="px-4 py-2 bg-red-500 text-white hover:bg-red-600 transition-colors"
                                 >
-                                    Delete Form
+                                    Archive Form
                                 </button>
                             </div>
                         </div>

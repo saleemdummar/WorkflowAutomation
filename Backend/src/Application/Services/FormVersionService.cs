@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using WorkflowAutomation.Application.DTOs.FormVersions;
 using WorkflowAutomation.Application.DTOs.Forms;
 using WorkflowAutomation.Application.Interfaces;
@@ -15,23 +17,32 @@ namespace WorkflowAutomation.Application.Services
     {
         private readonly IRepository<FormVersionHistory> _versionRepository;
         private readonly IRepository<Form> _formRepository;
+        private readonly IRepository<FormPermission>? _permissionRepository;
         private readonly IFormService _formService;
+        private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IUnitOfWork _unitOfWork;
 
         public FormVersionService(
             IRepository<FormVersionHistory> versionRepository,
             IRepository<Form> formRepository,
             IFormService formService,
-            IUnitOfWork unitOfWork)
+            IUnitOfWork unitOfWork,
+            IHttpContextAccessor httpContextAccessor,
+            IRepository<FormPermission>? permissionRepository = null)
         {
             _versionRepository = versionRepository;
             _formRepository = formRepository;
+            _permissionRepository = permissionRepository;
             _formService = formService;
+            _httpContextAccessor = httpContextAccessor;
             _unitOfWork = unitOfWork;
         }
 
         public async Task<IEnumerable<FormVersionDto>> GetFormVersionsAsync(Guid formId)
         {
+            if (!await HasFormPermissionAsync(formId, "View"))
+                return Enumerable.Empty<FormVersionDto>();
+
             var versions = await _versionRepository.FindAsync(v => v.FormId == formId);
             return versions
                 .OrderByDescending(v => v.VersionNumber)
@@ -41,11 +52,17 @@ namespace WorkflowAutomation.Application.Services
         public async Task<FormVersionDto> GetVersionByIdAsync(Guid versionId)
         {
             var version = await _versionRepository.GetByIdAsync(versionId);
-            return version != null ? MapToDto(version) : null;
+            if (version == null || !await HasFormPermissionAsync(version.FormId, "View"))
+                return null;
+
+            return MapToDto(version);
         }
 
         public async Task<FormVersionDto> GetLatestVersionAsync(Guid formId)
         {
+            if (!await HasFormPermissionAsync(formId, "View"))
+                return null;
+
             var versions = await _versionRepository.FindAsync(v => v.FormId == formId);
             var latest = versions
                 .OrderByDescending(v => v.VersionNumber)
@@ -59,6 +76,8 @@ namespace WorkflowAutomation.Application.Services
             var form = await _formRepository.GetByIdAsync(formId);
             if (form == null)
                 throw new KeyNotFoundException("Form not found");
+            if (!await HasFormPermissionAsync(formId, "Edit", userId))
+                throw new UnauthorizedAccessException("You do not have permission to rollback this form");
 
             var versions = await _versionRepository.FindAsync(v => v.FormId == formId && v.VersionNumber == versionNumber);
             var targetVersion = versions.FirstOrDefault();
@@ -70,7 +89,7 @@ namespace WorkflowAutomation.Application.Services
             {
                 FormId = formId,
                 VersionNumber = form.FormVersion + 1,
-                FormDefinitionJson = form.FormDefinitionJson,
+                FormDefinitionJson = (await _formService.GetFormByIdAsync(formId))?.Definition ?? form.FormDefinitionJson,
                 FormLayoutJson = form.FormLayoutJson,
                 ChangeDescription = $"Rolled back to version {versionNumber}",
                 CreatedBy = userId
@@ -95,6 +114,9 @@ namespace WorkflowAutomation.Application.Services
 
         public async Task<FormVersionComparisonDto> CompareVersionsAsync(Guid formId, int version1, int version2)
         {
+            if (!await HasFormPermissionAsync(formId, "View"))
+                throw new KeyNotFoundException("Form not found");
+
             var versions = await _versionRepository.FindAsync(v => v.FormId == formId && (v.VersionNumber == version1 || v.VersionNumber == version2));
             var v1 = versions.FirstOrDefault(v => v.VersionNumber == version1);
             var v2 = versions.FirstOrDefault(v => v.VersionNumber == version2);
@@ -195,6 +217,78 @@ namespace WorkflowAutomation.Application.Services
                 CreatedBy = version.CreatedBy,
                 CreatedAt = version.CreatedAt
             };
+        }
+
+        private async Task<bool> HasFormPermissionAsync(Guid formId, string requiredLevel, string? explicitUserId = null)
+        {
+            if (_permissionRepository == null) return true;
+
+            var current = GetCurrentUserContext();
+            var userId = explicitUserId ?? current.UserId;
+
+            if (current.Roles.Contains("super-admin") || current.Roles.Contains("admin")) return true;
+
+            var permissions = (await _permissionRepository.FindAsync(p => p.FormId == formId)).ToList();
+            if (!permissions.Any()) return true;
+            if (string.IsNullOrWhiteSpace(userId)) return false;
+
+            var requiredRank = PermissionRank(requiredLevel);
+            Guid.TryParse(userId, out var userGuid);
+
+            foreach (var permission in permissions)
+            {
+                if (PermissionRank(permission.PermissionLevel) < requiredRank) continue;
+
+                if (permission.UserId.HasValue && permission.UserId.Value == userGuid)
+                    return true;
+
+                if (!string.IsNullOrWhiteSpace(permission.RoleName) && current.Roles.Contains(permission.RoleName))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private CurrentUserContext GetCurrentUserContext()
+        {
+            var current = new CurrentUserContext();
+            var principal = _httpContextAccessor.HttpContext?.User as ClaimsPrincipal;
+            if (principal == null || principal.Identity?.IsAuthenticated != true) return current;
+
+            current.UserId = principal.FindFirst("sub")?.Value
+                ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+            foreach (var roleClaim in principal.FindAll(ClaimTypes.Role))
+            {
+                if (!string.IsNullOrWhiteSpace(roleClaim.Value))
+                    current.Roles.Add(roleClaim.Value.Trim());
+            }
+
+            foreach (var roleClaim in principal.FindAll("role"))
+            {
+                if (string.IsNullOrWhiteSpace(roleClaim.Value)) continue;
+                foreach (var role in roleClaim.Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    current.Roles.Add(role);
+            }
+
+            return current;
+        }
+
+        private static int PermissionRank(string? level)
+        {
+            return level?.ToLowerInvariant() switch
+            {
+                "admin" => 4,
+                "edit" => 3,
+                "submit" => 2,
+                _ => 1
+            };
+        }
+
+        private sealed class CurrentUserContext
+        {
+            public string? UserId { get; set; }
+            public HashSet<string> Roles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         }
     }
 }

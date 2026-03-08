@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import React, { useState, Suspense } from 'react';
 import { FormBuilder } from '../../../components/FormBuilder/FormBuilder';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -7,6 +9,11 @@ import { FormElement, FormLayoutConfig, FormLayoutType } from '../../../types/fo
 import { AuthGuard } from '../../../components/AuthGuard';
 import { useToast } from '../../../contexts/ToastContext';
 import { useCategories, useTemplate, useCreateForm } from '../../../hooks/queries';
+
+interface CategoryOption {
+    id: string;
+    categoryName: string;
+}
 
 const NewFormContent: React.FC = () => {
     const router = useRouter();
@@ -18,6 +25,7 @@ const NewFormContent: React.FC = () => {
     const [initialElements, setInitialElements] = useState<FormElement[]>([]);
     const [initialLayout, setInitialLayout] = useState<{ layout: FormLayoutConfig | FormLayoutType; theme: { primaryColor: string; backgroundColor: string; textColor: string } } | undefined>(undefined);
     const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+    const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
 
     // TanStack Query hooks
     const { data: categories = [], isLoading: isLoadingCategories } = useCategories();
@@ -33,11 +41,20 @@ const NewFormContent: React.FC = () => {
                 if (template.formLayout) {
                     setInitialLayout(JSON.parse(template.formLayout));
                 }
-            } catch (error) {
-                console.error('Failed to parse template:', error);
+                setTemplateLoadError(null);
+            } catch {
+                setInitialElements([]);
+                setInitialLayout(undefined);
+                setTemplateLoadError('The selected template contains invalid data, so the builder was opened with a blank form instead.');
             }
         }
     }, [template, templateId]);
+
+    React.useEffect(() => {
+        if (templateLoadError) {
+            toast.error(templateLoadError);
+        }
+    }, [templateLoadError, toast]);
 
     const isLoading = isLoadingCategories || (!!templateId && isLoadingTemplate);
 
@@ -79,7 +96,7 @@ const NewFormContent: React.FC = () => {
                         className="w-full bg-fcc-charcoal border-2 border-fcc-border px-4 py-3 text-white focus:border-fcc-gold focus:ring-2 focus:ring-fcc-gold/20 outline-none transition-all duration-200 hover:border-fcc-gold/70"
                     >
                         <option value="">📄 No Category Selected</option>
-                        {categories.map((category: any) => (
+                        {categories.map((category: CategoryOption) => (
                             <option key={category.id} value={category.id}>
                                 📁 {category.categoryName}
                             </option>
@@ -88,6 +105,9 @@ const NewFormContent: React.FC = () => {
                     <p className="text-xs text-gray-400 mt-2">
                         Choose a category to organize your form. You can change this later.
                     </p>
+                    {templateLoadError && (
+                        <p className="text-xs text-amber-400 mt-2">{templateLoadError}</p>
+                    )}
                 </div>
             </div>
 

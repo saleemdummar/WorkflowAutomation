@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { formsApi } from '../lib/api';
 import { FormLifecycleStatus } from '../types/entities';
+import { queryKeys } from '../hooks/queries';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirmDialog } from '../hooks/useConfirmDialog';
 
@@ -13,6 +15,8 @@ interface Props {
 
 export default function FormLifecycleManager({ formId, onStatusChange }: Props) {
     const [confirmAction, ConfirmDialog] = useConfirmDialog();
+    const queryClient = useQueryClient();
+    const toast = useToast();
     const [status, setStatus] = useState<FormLifecycleStatus | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -45,6 +49,14 @@ export default function FormLifecycleManager({ formId, onStatusChange }: Props) 
         loadStatus();
     }, [loadStatus]);
 
+    const invalidateLifecycleQueries = useCallback(() => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
+        queryClient.invalidateQueries({ queryKey: queryKeys.forms.detail(formId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.forms.lifecycle(formId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.forms.archived });
+        queryClient.invalidateQueries({ queryKey: queryKeys.forms.expired });
+    }, [formId, queryClient]);
+
     const handleArchive = async () => {
         if (!(await confirmAction({ message: 'Are you sure you want to archive this form? It will no longer be accessible to users.' }))) return;
 
@@ -54,10 +66,13 @@ export default function FormLifecycleManager({ formId, onStatusChange }: Props) 
             setError(null);
             setArchiveReason('');
             await loadStatus();
+            invalidateLifecycleQueries();
+            toast.success('Form archived successfully.');
             if (onStatusChange) onStatusChange();
         } catch (err: unknown) {
             const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to archive form';
             setError(errorMessage);
+            toast.error(errorMessage);
         } finally {
             setLoading(false);
         }
@@ -70,10 +85,13 @@ export default function FormLifecycleManager({ formId, onStatusChange }: Props) 
             setError(null);
             setRestoreReason('');
             await loadStatus();
+            invalidateLifecycleQueries();
+            toast.success('Form restored successfully.');
             if (onStatusChange) onStatusChange();
         } catch (err: unknown) {
             const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to restore form';
             setError(errorMessage);
+            toast.error(errorMessage);
         } finally {
             setLoading(false);
         }
@@ -90,10 +108,13 @@ export default function FormLifecycleManager({ formId, onStatusChange }: Props) 
             setExpirationDate('');
             setExpirationReason('');
             await loadStatus();
+            invalidateLifecycleQueries();
+            toast.success('Form expiration updated successfully.');
             if (onStatusChange) onStatusChange();
         } catch (err: unknown) {
             const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to set expiration';
             setError(errorMessage);
+            toast.error(errorMessage);
         } finally {
             setLoading(false);
         }
@@ -112,10 +133,13 @@ export default function FormLifecycleManager({ formId, onStatusChange }: Props) 
             setUnpublishDate('');
             setScheduleReason('');
             await loadStatus();
+            invalidateLifecycleQueries();
+            toast.success('Publishing schedule updated successfully.');
             if (onStatusChange) onStatusChange();
         } catch (err: unknown) {
             const errorMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to schedule publishing';
             setError(errorMessage);
+            toast.error(errorMessage);
         } finally {
             setLoading(false);
         }

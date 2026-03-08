@@ -125,6 +125,8 @@ export function useCreateForm() {
         mutationFn: formsApi.create,
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.archived });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.expired });
         },
     });
 }
@@ -137,6 +139,9 @@ export function useUpdateForm() {
         onSuccess: (_data, { id }) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.detail(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.fields(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.lifecycle(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.versions(id) });
         },
     });
 }
@@ -145,8 +150,12 @@ export function useDeleteForm() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: formsApi.delete,
-        onSuccess: () => {
+        onSuccess: (_data, id) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.detail(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.lifecycle(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.archived });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.expired });
         },
     });
 }
@@ -158,6 +167,21 @@ export function usePublishForm() {
         onSuccess: (_data, id) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.detail(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.lifecycle(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.expired });
+        },
+    });
+}
+
+export function useUnpublishForm() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: formsApi.unpublish,
+        onSuccess: (_data, id) => {
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.detail(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.lifecycle(id) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.expired });
         },
     });
 }
@@ -167,9 +191,12 @@ export function useArchiveForm() {
     return useMutation({
         mutationFn: ({ formId, data }: { formId: string; data?: { archiveReason?: string } }) =>
             formsApi.archive(formId, data),
-        onSuccess: () => {
+        onSuccess: (_data, { formId }) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.detail(formId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.lifecycle(formId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.archived });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.expired });
         },
     });
 }
@@ -179,9 +206,12 @@ export function useRestoreForm() {
     return useMutation({
         mutationFn: ({ formId, data }: { formId: string; data?: { restoreReason?: string } }) =>
             formsApi.restore(formId, data),
-        onSuccess: () => {
+        onSuccess: (_data, { formId }) => {
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.all });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.detail(formId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.lifecycle(formId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.forms.archived });
+            queryClient.invalidateQueries({ queryKey: queryKeys.forms.expired });
         },
     });
 }

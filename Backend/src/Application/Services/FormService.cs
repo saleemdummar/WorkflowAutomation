@@ -113,10 +113,10 @@ namespace WorkflowAutomation.Application.Services
             var userId = explicitUserId ?? current.UserId;
 
             if (current.Roles.Contains("super-admin") || current.Roles.Contains("admin")) return true;
-            if (string.IsNullOrWhiteSpace(userId)) return true;
 
             var permissions = (await _permissionRepository.FindAsync(p => p.FormId == formId)).ToList();
             if (!permissions.Any()) return true;
+            if (string.IsNullOrWhiteSpace(userId)) return false;
 
             var requiredRank = PermissionRank(requiredLevel);
             Guid.TryParse(userId, out var userGuid);
@@ -153,15 +153,20 @@ namespace WorkflowAutomation.Application.Services
                     return new List<FormField>();
 
                 var fields = new List<FormField>();
+                var usedFieldNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 int order = 0;
 
                 foreach (var element in formElements)
                 {
+                    var fieldName = EnsureUniqueFieldName(
+                        NormalizeFieldName(element.FieldName, element.Label),
+                        usedFieldNames);
+
                     var field = new FormField
                     {
                         Id = Guid.TryParse(element.Id, out var guid) ? guid : Guid.NewGuid(),
                         FormId = formId,
-                        FieldName = GenerateFieldName(element.Label),
+                        FieldName = fieldName,
                         FieldLabel = element.Label,
                         FieldType = element.Type,
                         IsRequired = element.Required,
@@ -199,6 +204,48 @@ namespace WorkflowAutomation.Application.Services
                 .Where(c => char.IsLetterOrDigit(c) || c == ' ')
                 .Select(c => c == ' ' ? '_' : c))
                 .Trim('_');
+        }
+
+        private string NormalizeFieldName(string? fieldName, string label)
+        {
+            var candidate = string.IsNullOrWhiteSpace(fieldName)
+                ? GenerateFieldName(label)
+                : GenerateFieldName(fieldName);
+
+            return string.IsNullOrWhiteSpace(candidate) ? "field" : candidate;
+        }
+
+        private static string EnsureUniqueFieldName(string baseName, ISet<string> usedFieldNames)
+        {
+            var candidate = string.IsNullOrWhiteSpace(baseName) ? "field" : baseName;
+            if (usedFieldNames.Add(candidate))
+            {
+                return candidate;
+            }
+
+            var suffix = 2;
+            while (!usedFieldNames.Add($"{candidate}_{suffix}"))
+            {
+                suffix++;
+            }
+
+            return $"{candidate}_{suffix}";
+        }
+
+        private void ValidateFieldNames(List<FormElementDto> elements)
+        {
+            var duplicates = elements
+                .Select(element => NormalizeFieldName(element.FieldName, element.Label))
+                .GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToList();
+
+            if (duplicates.Any())
+            {
+                throw new InvalidOperationException(
+                    $"Field names must be unique. Duplicate field names: {string.Join(", ", duplicates)}");
+            }
         }
 
         private async Task<string> BuildDefinitionJsonForResponseAsync(Form form)
@@ -266,6 +313,7 @@ namespace WorkflowAutomation.Application.Services
                 }
             }
 
+            ValidateFieldNames(formElements);
             DetectCircularDependencies(formElements);
 
             var form = new Form
@@ -292,6 +340,15 @@ namespace WorkflowAutomation.Application.Services
             await _unitOfWork.CompleteAsync();
 
             await _conditionNormalizationService.SaveConditionsFromElementsAsync(form.Id, formElements, fields, userId);
+            await _versionRepository.AddAsync(new FormVersionHistory
+            {
+                FormId = form.Id,
+                VersionNumber = 1,
+                FormDefinitionJson = dto.Definition,
+                FormLayoutJson = form.FormLayoutJson,
+                ChangeDescription = dto.ChangeDescription ?? "Initial version",
+                CreatedBy = userId
+            });
             await _unitOfWork.CompleteAsync();
 
             var definitionJson = await BuildDefinitionJsonForResponseAsync(form);
@@ -335,6 +392,8 @@ namespace WorkflowAutomation.Application.Services
         {
             var form = await _formRepository.GetByIdAsync(formId);
             if (form == null) throw new KeyNotFoundException("Form not found");
+            if (!await HasFormPermissionAsync(formId, "Edit", userId))
+                throw new UnauthorizedAccessException("You do not have permission to edit this form");
 
             var definitionJson = await BuildDefinitionJsonForResponseAsync(form);
             await SyncFormFieldsAsync(formId, definitionJson, userId);
@@ -390,6 +449,7 @@ namespace WorkflowAutomation.Application.Services
                 }
             }
 
+            ValidateFieldNames(formElements);
             DetectCircularDependencies(formElements);
 
             // Delete old conditions FIRST (this clears ConditionGroupId on fields)
@@ -424,12 +484,20 @@ namespace WorkflowAutomation.Application.Services
             var existingFields = (await _fieldRepository.FindAsync(f => f.FormId == formId)).ToList();
             var newFields = ParseFormDefinition(definitionJson, formId, userId);
 
-            var existingFieldIds = existingFields.Select(f => f.Id).ToHashSet();
-            var newFieldIds = newFields.Select(f => f.Id).ToHashSet();
+            var existingFieldsById = existingFields.ToDictionary(f => f.Id);
+            var existingFieldsByName = existingFields
+                .GroupBy(f => f.FieldName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var matchedExistingFieldIds = new HashSet<Guid>();
 
             foreach (var newField in newFields)
             {
-                var existingField = existingFields.FirstOrDefault(f => f.Id == newField.Id);
+                var existingField = existingFieldsById.TryGetValue(newField.Id, out var exactMatch)
+                    ? exactMatch
+                    : existingFieldsByName.TryGetValue(newField.FieldName, out var fieldNameMatch)
+                        ? fieldNameMatch
+                        : null;
+
                 if (existingField != null)
                 {
                     existingField.FieldName = newField.FieldName;
@@ -439,15 +507,17 @@ namespace WorkflowAutomation.Application.Services
                     existingField.DisplayOrder = newField.DisplayOrder;
                     existingField.FieldConfigJson = newField.FieldConfigJson;
                     await _fieldRepository.UpdateAsync(existingField);
+                    matchedExistingFieldIds.Add(existingField.Id);
                 }
                 else
                 {
                     await _fieldRepository.AddAsync(newField);
+                    matchedExistingFieldIds.Add(newField.Id);
                 }
             }
 
             // Delete fields that were removed from the definition
-            var removedFields = existingFields.Where(f => !newFieldIds.Contains(f.Id)).ToList();
+            var removedFields = existingFields.Where(f => !matchedExistingFieldIds.Contains(f.Id)).ToList();
             if (removedFields.Any())
             {
                 await _fieldRepository.DeleteRangeAsync(removedFields);
@@ -522,6 +592,9 @@ namespace WorkflowAutomation.Application.Services
                 _logger.LogError(ex, "Failed to parse imported form definition JSON");
             }
 
+            ValidateFieldNames(formElements);
+            DetectCircularDependencies(formElements);
+
             var form = new Form
             {
                 FormName = dto.Name,
@@ -572,7 +645,10 @@ namespace WorkflowAutomation.Application.Services
             var dtos = new List<FormDto>();
             foreach (var f in filteredForms)
             {
-                dtos.Add(await BuildFormDtoAsync(f));
+                if (await HasFormPermissionAsync(f.Id, "View"))
+                {
+                    dtos.Add(await BuildFormDtoAsync(f));
+                }
             }
             return dtos;
         }
@@ -636,11 +712,13 @@ namespace WorkflowAutomation.Application.Services
         private void DetectCircularDependencies(List<FormElementDto> elements)
         {
             var graph = new Dictionary<string, List<string>>();
-            var fieldNameToId = new Dictionary<string, string>();
+            var fieldNameToId = elements.ToDictionary(
+                element => NormalizeFieldName(element.FieldName, element.Label),
+                element => element.Id,
+                StringComparer.OrdinalIgnoreCase);
+
             foreach (var element in elements)
             {
-                var fieldName = element.FieldName ?? GenerateFieldName(element.Label);
-                fieldNameToId[fieldName] = element.Id;
                 if (element.Calculation?.Expression != null)
                 {
                     var dependencies = ExtractVariables(element.Calculation.Expression);

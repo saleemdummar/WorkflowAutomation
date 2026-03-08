@@ -30,7 +30,13 @@ function UsersContent() {
     // Queries
     const { data: users = [], isLoading } = useAdminUsers({ search: searchQuery || undefined, max: 100 });
     const { data: allRoles = [] } = useRoles();
-    const filteredRoles = allRoles.filter((r) => typeof r === 'string' && !r.startsWith('default-roles') && r !== 'offline_access' && r !== 'uma_authorization');
+    const filteredRoles = (allRoles as unknown[]).filter(
+        (role): role is string =>
+            typeof role === 'string' &&
+            !role.startsWith('default-roles') &&
+            role !== 'offline_access' &&
+            role !== 'uma_authorization'
+    );
 
     // Mutations
     const enableUserMutation = useEnableUser();

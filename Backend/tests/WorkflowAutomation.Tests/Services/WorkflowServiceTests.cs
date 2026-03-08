@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
@@ -28,6 +29,7 @@ namespace WorkflowAutomation.Tests.Services
         private readonly Mock<IUnitOfWork> _unitOfWork;
         private readonly Mock<ISystemLogService> _systemLogService;
         private readonly Mock<IAuditLogService> _auditLogService;
+        private readonly Mock<IWorkflowDefinitionService> _definitionService;
         private readonly Mock<ILogger<WorkflowService>> _logger;
         private readonly WorkflowService _sut;
 
@@ -43,7 +45,13 @@ namespace WorkflowAutomation.Tests.Services
             _unitOfWork = new Mock<IUnitOfWork>();
             _systemLogService = new Mock<ISystemLogService>();
             _auditLogService = new Mock<IAuditLogService>();
+            _definitionService = new Mock<IWorkflowDefinitionService>();
             _logger = new Mock<ILogger<WorkflowService>>();
+
+            List<string> validationErrors = new();
+            _definitionService
+                .Setup(s => s.ValidateWorkflowDefinition(It.IsAny<JsonObject>(), out validationErrors))
+                .Returns(true);
 
             _nodeRepo.Setup(r => r.FindAsync(It.IsAny<Expression<Func<WorkflowNode, bool>>>()))
                 .ReturnsAsync(new List<WorkflowNode>());
@@ -62,6 +70,7 @@ namespace WorkflowAutomation.Tests.Services
                 _submissionRepo.Object,
                 _nodeRepo.Object,
                 _edgeRepo.Object,
+                _definitionService.Object,
                 _unitOfWork.Object,
                 _systemLogService.Object,
                 _auditLogService.Object,
